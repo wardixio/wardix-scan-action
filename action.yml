@@ -1,0 +1,183 @@
+# Wardix scan — composite action wrapping the `wardix` CLI (Chunk 14).
+# Flow: npx @wardix/cli scan (json + SARIF) → sticky PR comment → optional
+# code-scanning upload → exit with the CLI's gate code. The scan step itself
+# never fails so the comment and SARIF upload always run; the final Gate step
+# re-raises the CLI exit code (0 pass · 1 gate failed · 2 scan failed ·
+# 3 usage/auth).
+name: Wardix Scan
+description: Security diff for mobile builds — fails CI only on findings this build introduced, never on known ones.
+branding:
+  icon: shield
+  color: gray-dark
+
+inputs:
+  artifact:
+    description: Path to the built .apk or .ipa to scan.
+    required: true
+  key:
+    description: Wardix upload key (wdx_ak_…) — pass a repository secret, never a literal.
+    required: true
+  fail-on:
+    description: Lowest severity of a NEW finding that fails the build (critical | high | medium | low | info | none).
+    required: false
+    default: high
+  comment:
+    description: "Post (and keep updating) a sticky PR comment with the delta summary. Needs `pull-requests: write`."
+    required: false
+    default: "true"
+  upload-sarif:
+    description: "Upload the SARIF log to GitHub code scanning. Needs `security-events: write` (and GitHub Advanced Security on private repos)."
+    required: false
+    default: "false"
+  timeout:
+    description: Maximum seconds to wait for the scan to complete.
+    required: false
+    default: "600"
+  cli-version:
+    description: "@wardix/cli npm version to run (passed to npx)."
+    required: false
+    default: latest
+
+outputs:
+  new-count:
+    description: Findings this build introduced.
+    value: ${{ steps.scan.outputs.new-count }}
+  fixed-count:
+    description: Findings gone since the previous build.
+    value: ${{ steps.scan.outputs.fixed-count }}
+  persisting-count:
+    description: Findings carried over from previous builds (never gate).
+    value: ${{ steps.scan.outputs.persisting-count }}
+  report-url:
+    description: Dashboard URL of the full scan report.
+    value: ${{ steps.scan.outputs.report-url }}
+  gate:
+    description: Gate verdict — passed, failed or off (--fail-on none).
+    value: ${{ steps.scan.outputs.gate }}
+
+runs:
+  using: composite
+  steps:
+    - id: scan
+      shell: bash
+      env:
+        WARDIX_KEY: ${{ inputs.key }}
+        ARTIFACT: ${{ inputs.artifact }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        TIMEOUT: ${{ inputs.timeout }}
+        CLI_VERSION: ${{ inputs.cli-version }}
+      run: |
+        set +e
+        npx --yes "@wardix/cli@${CLI_VERSION}" scan "$ARTIFACT" \
+          --wait --json \
+          --fail-on "$FAIL_ON" \
+          --timeout "$TIMEOUT" \
+          --sarif "$RUNNER_TEMP/wardix.sarif" \
+          > "$RUNNER_TEMP/wardix-report.json"
+        code=$?
+        set -e
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        if [ -s "$RUNNER_TEMP/wardix.sarif" ]; then
+          echo "sarif-written=true" >> "$GITHUB_OUTPUT"
+        fi
+        if [ -s "$RUNNER_TEMP/wardix-report.json" ]; then
+          node -e '
+            const fs = require("fs");
+            const r = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/wardix-report.json", "utf8"));
+            const gate = r.gate.fail_on === "none" ? "off" : r.gate.passed ? "passed" : "failed";
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, [
+              `new-count=${r.scan.new_count ?? 0}`,
+              `fixed-count=${r.scan.fixed_count ?? 0}`,
+              `persisting-count=${r.scan.persisting_count ?? 0}`,
+              `report-url=${r.url}`,
+              `gate=${gate}`,
+              "",
+            ].join("\n"));
+          '
+        fi
+
+    - name: Sticky PR comment
+      if: ${{ inputs.comment == 'true' && github.event_name == 'pull_request' }}
+      uses: actions/github-script@v7
+      env:
+        SCAN_EXIT: ${{ steps.scan.outputs.exit-code }}
+      with:
+        script: |
+          const fs = require('fs');
+          const marker = '<!-- wardix-scan-report -->';
+          const reportPath = `${process.env.RUNNER_TEMP}/wardix-report.json`;
+
+          const icon = (s) =>
+            s === 'critical' || s === 'high' ? '🔴' : s === 'medium' ? '🟡' : '⚪';
+
+          let body;
+          if (!fs.existsSync(reportPath) || !fs.statSync(reportPath).size) {
+            body = `${marker}\n### Δ Wardix\n\nScan did not complete (exit code ${process.env.SCAN_EXIT}) — check the job log.`;
+          } else {
+            const r = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+            const fresh = r.findings.filter((f) => f.delta === 'new');
+            const persisting = r.findings.length - fresh.length;
+            const verdict =
+              r.gate.fail_on === 'none'
+                ? '**GATE OFF** (`fail-on: none`)'
+                : r.gate.passed
+                  ? `**GATE PASS** — no new findings at or above \`${r.gate.fail_on}\``
+                  : `**GATE FAIL** — ${r.gate.failing_count} new finding(s) at or above \`${r.gate.fail_on}\``;
+
+            const lines = [
+              marker,
+              `### Δ Wardix — ${r.scan.new_count ?? 0} new · ${r.scan.fixed_count ?? 0} fixed · ${r.scan.persisting_count ?? 0} persisting`,
+              '',
+              verdict,
+            ];
+            if (fresh.length) {
+              lines.push('', '| | New finding | Rule | Where |', '|---|---|---|---|');
+              for (const f of fresh.slice(0, 20)) {
+                const where = f.location?.file ? `\`${f.location.file}\`` : '';
+                const dismissed = f.state === 'dismissed' ? ' _(dismissed — not gating)_' : '';
+                lines.push(
+                  `| ${icon(f.severity)} ${f.severity} | [${f.title}](${f.url})${dismissed} | \`${f.rule_id}\` | ${where} |`,
+                );
+              }
+              if (fresh.length > 20) lines.push(`| | _…and ${fresh.length - 20} more_ | | |`);
+            } else {
+              lines.push('', 'No new findings — this build introduced nothing.');
+            }
+            if (persisting) {
+              lines.push('', `_${persisting} persisting finding(s) — known from previous builds, never re-break the build._`);
+            }
+            lines.push('', `[Full report →](${r.url})`);
+            body = lines.join('\n');
+          }
+
+          const { data: comments } = await github.rest.issues.listComments({
+            ...context.repo,
+            issue_number: context.issue.number,
+            per_page: 100,
+          });
+          const mine = comments.find((c) => c.body && c.body.includes(marker));
+          if (mine) {
+            await github.rest.issues.updateComment({ ...context.repo, comment_id: mine.id, body });
+          } else {
+            await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
+          }
+
+    - name: Upload SARIF to code scanning
+      # Never let a code-scanning hiccup (rejected SARIF, no Advanced Security,
+      # GitHub outage) preempt the gate — the Gate step stays the source of truth.
+      continue-on-error: true
+      if: ${{ inputs.upload-sarif == 'true' && steps.scan.outputs.sarif-written == 'true' }}
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ runner.temp }}/wardix.sarif
+
+    - name: Gate
+      shell: bash
+      env:
+        CODE: ${{ steps.scan.outputs.exit-code }}
+        URL: ${{ steps.scan.outputs.report-url }}
+      run: |
+        if [ "$CODE" != "0" ]; then
+          echo "wardix scan exited $CODE${URL:+ — $URL}" >&2
+          exit "$CODE"
+        fi
