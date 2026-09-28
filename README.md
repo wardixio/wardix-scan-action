@@ -45,8 +45,8 @@ and store it as a repository secret — it is shown once and stored hashed.
 | `fail-on` | `high` | Lowest severity of a NEW finding that fails the build (`critical` \| `high` \| `medium` \| `low` \| `info` \| `none`). |
 | `comment` | `true` | Post and keep updating one sticky PR comment with the delta summary. |
 | `upload-sarif` | `false` | Upload the SARIF log to GitHub code scanning (findings appear in the Security tab). |
-| `timeout` | `600` | Maximum seconds to wait for the scan. |
-| `cli-version` | `latest` | `@wardix/cli` npm version passed to npx (pin for reproducible CI). |
+| `timeout` | `1500` | Maximum seconds to wait for the scan. |
+| `cli-version` | `0.2.3` | Exact `@wardix/cli` npm version passed to npx. |
 
 `WARDIX_API_URL` / `WARDIX_APP_URL` env vars set at the job level pass
 through to the CLI for self-hosted overrides.
@@ -70,7 +70,7 @@ always run; the final Gate step re-raises the CLI exit code:
 |---|---|
 | 0 | Gate passed — nothing new at or above `fail-on`. |
 | 1 | Gate failed — this build introduced findings at or above `fail-on`. |
-| 2 | Scan errored or timed out. |
+| 2 | Scan errored, timed out, or completed without full required static coverage. |
 | 3 | Bad configuration — missing/rejected key, unreadable artifact. |
 
 ## Code scanning notes
