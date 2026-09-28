@@ -91,11 +91,11 @@ Reference it by the floating major tag — `v1` always points at the latest `v1.
 - uses: wardixio/wardix-scan-action@v1
 ```
 
-Pin to an exact tag (`@v1.0.0`) for fully reproducible CI.
+Pin to the current exact tag (`@v1.0.1`) for fully reproducible CI.
 
 Maintainer release flow:
 
 1. Push `action.yml` + `README.md` to the repo root.
-2. Tag the release: `git tag v1.0.0 && git push origin v1.0.0`.
-3. Move the floating major tag: `git tag -f v1 v1.0.0 && git push -f origin v1`.
+2. Tag the release (for example, `git tag v1.0.1 && git push origin v1.0.1`).
+3. Move the floating major tag to that exact release (`git tag -f v1 v1.0.1 && git push -f origin v1`).
 4. (Optional) Create a GitHub Release and tick "Publish this Action to the GitHub Marketplace".
