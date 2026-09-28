@@ -32,11 +32,11 @@ inputs:
   timeout:
     description: Maximum seconds to wait for the scan to complete.
     required: false
-    default: "600"
+    default: "1500"
   cli-version:
-    description: "@wardix/cli npm version to run (passed to npx)."
+    description: "Exact @wardix/cli npm version to run (passed to npx)."
     required: false
-    default: latest
+    default: "0.2.3"
 
 outputs:
   new-count:
@@ -98,7 +98,7 @@ runs:
 
     - name: Sticky PR comment
       if: ${{ inputs.comment == 'true' && github.event_name == 'pull_request' }}
-      uses: actions/github-script@v7
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
       env:
         SCAN_EXIT: ${{ steps.scan.outputs.exit-code }}
       with:
@@ -167,7 +167,7 @@ runs:
       # GitHub outage) preempt the gate — the Gate step stays the source of truth.
       continue-on-error: true
       if: ${{ inputs.upload-sarif == 'true' && steps.scan.outputs.sarif-written == 'true' }}
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@411c4c9a36b3fca4d674f06b6396b2c6d23522c6 # v3
       with:
         sarif_file: ${{ runner.temp }}/wardix.sarif
 

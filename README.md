@@ -45,8 +45,8 @@ and store it as a repository secret — it is shown once and stored hashed.
 | `fail-on` | `high` | Lowest severity of a NEW finding that fails the build (`critical` \| `high` \| `medium` \| `low` \| `info` \| `none`). |
 | `comment` | `true` | Post and keep updating one sticky PR comment with the delta summary. |
 | `upload-sarif` | `false` | Upload the SARIF log to GitHub code scanning (findings appear in the Security tab). |
-| `timeout` | `600` | Maximum seconds to wait for the scan. |
-| `cli-version` | `latest` | `@wardix/cli` npm version passed to npx (pin for reproducible CI). |
+| `timeout` | `1500` | Maximum seconds to wait for the scan. |
+| `cli-version` | `0.2.3` | Exact `@wardix/cli` npm version passed to npx. |
 
 `WARDIX_API_URL` / `WARDIX_APP_URL` env vars set at the job level pass
 through to the CLI for self-hosted overrides.
@@ -70,7 +70,7 @@ always run; the final Gate step re-raises the CLI exit code:
 |---|---|
 | 0 | Gate passed — nothing new at or above `fail-on`. |
 | 1 | Gate failed — this build introduced findings at or above `fail-on`. |
-| 2 | Scan errored or timed out. |
+| 2 | Scan errored, timed out, or completed without full required static coverage. |
 | 3 | Bad configuration — missing/rejected key, unreadable artifact. |
 
 ## Code scanning notes
@@ -91,11 +91,11 @@ Reference it by the floating major tag — `v1` always points at the latest `v1.
 - uses: wardixio/wardix-scan-action@v1
 ```
 
-Pin to an exact tag (`@v1.0.0`) for fully reproducible CI.
+Pin to the current exact tag (`@v1.0.1`) for fully reproducible CI.
 
 Maintainer release flow:
 
 1. Push `action.yml` + `README.md` to the repo root.
-2. Tag the release: `git tag v1.0.0 && git push origin v1.0.0`.
-3. Move the floating major tag: `git tag -f v1 v1.0.0 && git push -f origin v1`.
+2. Tag the release (for example, `git tag v1.0.1 && git push origin v1.0.1`).
+3. Move the floating major tag to that exact release (`git tag -f v1 v1.0.1 && git push -f origin v1`).
 4. (Optional) Create a GitHub Release and tick "Publish this Action to the GitHub Marketplace".
